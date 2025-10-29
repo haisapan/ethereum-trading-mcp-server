@@ -64,7 +64,7 @@ TEST_BALANCE=100.0
 
 ```bash
 TEST_MODE=false
-ETHEREUM_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+ETHEREUM_RPC_URL=https://eth.llamarpc.com
 CHAIN_ID=1
 
 # 可选：用于模拟的钱包私钥（不会发送实际交易）
