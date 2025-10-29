@@ -1,167 +1,322 @@
-use rmcp::{
-    handler::server::{
-        router::tool::ToolRouter,
-        wrapper::Parameters,  // ← 正确的导入路径！
-        ServerHandler,
-    },
-    model::{CallToolResult, Content},
-    tool, tool_handler, tool_router,
-    transport::stdio,
-    ErrorData as McpError, ServiceExt,
-};
-
-// 导入工具模块
+mod config;
+mod erc20;
+mod eth_client;
+mod logging;
+mod token_registry;
 mod tools;
+mod types;
+mod uniswap;
+
+use config::Config;
+use erc20::Erc20Client;
+use eth_client::EthClient;
+use ethers::prelude::*;
+use logging::info;
+use token_registry::TokenRegistry;
 use tools::{
-    balance::{get_balance, GetBalanceRequest},
-    price::{get_token_price, GetTokenPriceRequest},
-    swap::{swap_tokens, SwapTokensRequest},
+    balance::{get_balance, GetBalanceArgs},
+    price::{get_token_price, GetTokenPriceArgs},
+    swap::{swap_tokens, SwapTokensArgs},
 };
+use uniswap::UniswapV2Client;
+
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::*,
+    ErrorData as McpError,
+    ServerHandler,
+    ServiceExt,
+};
+use std::sync::Arc;
 
 /// Ethereum Trading MCP Server
-/// 提供以太坊交易相关的 MCP 工具
+/// 提供以太坊交易相关的工具
 #[derive(Clone)]
-pub struct EthereumTradingServer {
+struct EthereumTradingServer {
+    config: Arc<Config>,
+    eth_client: Arc<EthClient>,
+    erc20_client: Arc<Erc20Client>,
+    uniswap_client: Arc<UniswapV2Client>,
+    token_registry: Arc<TokenRegistry>,
     tool_router: ToolRouter<Self>,
-    // TODO: 添加依赖注入字段
-    // config: Arc<Config>,
-    // eth_client: Arc<EthClient>,
-    // erc20_client: Arc<Erc20Client>,
-    // token_registry: Arc<TokenRegistry>,
 }
 
-/// 使用 tool_router 宏定义服务器工具
-#[tool_router]
+#[rmcp::tool_router]
 impl EthereumTradingServer {
-    /// 创建新的服务器实例
-    pub fn new() -> Self {
+    fn new(config: Config, eth_client: EthClient, provider: Option<Arc<Provider<Http>>>) -> Self {
+        let erc20_client = Erc20Client::new(provider.clone());
+        let uniswap_client = UniswapV2Client::new(provider);
+        let token_registry = TokenRegistry::new();
+
         Self {
+            config: Arc::new(config),
+            eth_client: Arc::new(eth_client),
+            erc20_client: Arc::new(erc20_client),
+            uniswap_client: Arc::new(uniswap_client),
+            token_registry: Arc::new(token_registry),
             tool_router: Self::tool_router(),
-            // TODO: 初始化依赖
         }
     }
 
-    // ==================== 以太坊交易工具 ====================
-
-    /// 查询 ETH 或 ERC20 代币余额
-    #[tool(description = "查询以太坊地址的 ETH 余额或 ERC20 代币余额。如果不提供 token_address，则查询 ETH 余额；否则查询指定 ERC20 代币的余额。")]
-    async fn get_balance(
+    /// 获取以太坊地址余额(支持 ETH 和 ERC20)
+    #[rmcp::tool(description = "获取以太坊地址余额(支持 ETH 和 ERC20 代币)")]
+    fn get_balance(
         &self,
-        Parameters(request): Parameters<GetBalanceRequest>,
+        args: Parameters<GetBalanceArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // TODO: 从 self 访问依赖
-        // let config = &self.config;
-        // let eth_client = &self.eth_client;
-        get_balance(request).await
+        get_balance(
+            &self.config,
+            &self.eth_client,
+            &self.erc20_client,
+            &self.token_registry,
+            args,
+        )
     }
 
-    /// 获取代币价格
-    #[tool(description = "获取代币在 Uniswap V2 上的当前价格。支持 USD 和 ETH 报价。可以使用代币符号（如 USDT）或合约地址。")]
-    async fn get_token_price(
+    /// 获取代币价格(支持 USD 和 ETH 报价)
+    #[rmcp::tool(description = "获取代币在 Uniswap V2 上的价格(支持 USD 和 ETH 报价)")]
+    fn get_token_price(
         &self,
-        Parameters(request): Parameters<GetTokenPriceRequest>,
+        args: Parameters<GetTokenPriceArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // TODO: 从 self 访问依赖
-        get_token_price(request).await
+        get_token_price(
+            &self.config,
+            &self.uniswap_client,
+            &self.erc20_client,
+            &self.token_registry,
+            args,
+        )
     }
 
-    /// 模拟代币交换
-    #[tool(description = "在 Uniswap V2/V3 上模拟代币交换。构造真实的交换交易并使用 eth_call 进行链上模拟（不实际执行）。返回预估输出、价格影响和 Gas 费用。")]
-    async fn swap_tokens(
+    /// 模拟代币交换(Uniswap V2)
+    #[rmcp::tool(description = "模拟 Uniswap V2 代币交换,返回预估输出和价格影响")]
+    fn swap_tokens(
         &self,
-        Parameters(request): Parameters<SwapTokensRequest>,
+        args: Parameters<SwapTokensArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // TODO: 从 self 访问依赖
-        swap_tokens(request).await
-    }
-
-    // ==================== 辅助工具 ====================
-
-    /// 简单的 Hello World 工具（用于测试）
-    #[tool(description = "返回一个简单的问候消息（测试工具）")]
-    async fn hello(&self) -> Result<CallToolResult, McpError> {
-        let greeting = "Hello, World! 👋 欢迎使用 Ethereum Trading MCP Server!";
-
-        Ok(CallToolResult::success(vec![Content::text(
-            greeting.to_string(),
-        )]))
-    }
-
-    /// 获取服务器信息
-    #[tool(description = "获取 MCP 服务器的基本信息，包括版本、功能列表等")]
-    async fn server_info(&self) -> Result<CallToolResult, McpError> {
-        let info = r#"
-🦀 Ethereum Trading MCP Server
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-版本: 0.1.0
-语言: Rust
-框架: rmcp 0.8.3 (Model Context Protocol)
-
-📋 可用工具:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔹 核心功能:
-  • get_balance      - 查询 ETH 和 ERC20 代币余额
-  • get_token_price  - 获取代币价格 (USD/ETH)
-  • swap_tokens      - 模拟 Uniswap 代币交换
-
-🔹 辅助工具:
-  • hello           - 测试连接
-  • server_info     - 显示本信息
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 技术栈:
-  - ethers-rs 2.0.14 (Ethereum 客户端)
-  - rmcp 0.8.3 (MCP SDK)
-  - tokio 1.48.0 (异步运行时)
-
-🔗 支持的协议:
-  - Ethereum Mainnet, Goerli, Sepolia
-  - Uniswap V2/V3
-
-⚠️  注意: swap_tokens 仅进行模拟，不会实际执行交易
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        "#.trim();
-
-        Ok(CallToolResult::success(vec![Content::text(
-            info.to_string(),
-        )]))
+        swap_tokens(
+            &self.config,
+            &self.uniswap_client,
+            &self.erc20_client,
+            &self.token_registry,
+            args,
+        )
     }
 }
 
-/// 实现 ServerHandler trait 以处理 MCP 协议
-#[tool_handler]
+#[rmcp::tool_handler]
 impl ServerHandler for EthereumTradingServer {
-    // 使用默认实现即可，tool_router 会自动处理工具调用
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some(
+                "以太坊交易 MCP 服务器 - 提供余额查询、价格查询和交换模拟功能。\n\
+                 可用工具:\n\
+                 - get_balance: 获取以太坊地址余额(支持 ETH 和 ERC20)\n\
+                 - get_token_price: 获取代币在 Uniswap V2 上的价格(支持 USD 和 ETH 报价)\n\
+                 - swap_tokens: 模拟 Uniswap V2 代币交换(返回预估输出和价格影响)"
+                    .to_string(),
+            ),
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+    eprintln!("🚀 启动 Ethereum Trading MCP Server...");
+    eprintln!();
 
-    tracing::info!("🚀 启动 Ethereum Trading MCP Server...");
+    // 加载配置
+    let config = Config::from_env()?;
+
+    // 初始化日志系统
+    logging::init_logging(&config.server.log_level, config.server.log_json_format)?;
+    info!("日志系统已初始化");
+
+    // 验证配置
+    config.validate()?;
+
+    // 打印配置信息
+    config.print_info();
+    eprintln!();
+
+    // 创建 Ethereum 客户端和 Provider
+    let rpc_url = if config.server.test_mode {
+        None
+    } else {
+        config.ethereum.rpc_url.as_deref()
+    };
+
+    let provider = if let Some(url) = rpc_url {
+        match Provider::<Http>::try_from(url) {
+            Ok(provider) => Some(Arc::new(provider)),
+            Err(e) => {
+                eprintln!("⚠️  无法创建 Provider: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let eth_client = EthClient::new(rpc_url, Some(config.ethereum.chain_id)).await?;
+
+    if eth_client.is_available() {
+        info!("Ethereum 客户端已连接");
+    } else {
+        info!("运行在离线模式(未连接到 Ethereum 网络)");
+    }
 
     // 创建服务器实例
-    let server = EthereumTradingServer::new();
+    let server = EthereumTradingServer::new(config, eth_client, provider);
 
-    // 创建 stdio 传输层
-    let transport = stdio();
+    eprintln!("🔧 可用工具:");
+    eprintln!("   - get_balance: 获取以太坊地址余额");
+    eprintln!("   - get_token_price: 获取代币价格");
+    eprintln!("   - swap_tokens: 模拟代币交换");
+    eprintln!();
 
-    // 启动服务器
-    tracing::info!("✅ MCP Server 已就绪，等待客户端连接...");
-    tracing::info!("📋 可用工具: get_balance, get_token_price, swap_tokens, hello, server_info");
+    eprintln!("✅ 服务器已准备就绪,等待连接...");
+    eprintln!();
 
-    let service = server.serve(transport).await?;
-
-    // 等待服务器关闭
-    let quit_reason = service.waiting().await?;
-    tracing::info!("👋 MCP Server 关闭，原因: {:?}", quit_reason);
+    // 使用 stdio 传输层启动服务器
+    let service = server.serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::balance::BalanceResult;
+    use crate::types::TokenInfo;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    /// 创建测试用 EthClient
+    async fn create_test_eth_client() -> EthClient {
+        EthClient::new(None, None)
+            .await
+            .expect("应该能创建测试客户端")
+    }
+
+    /// 创建测试配置(强制测试模式)
+    fn create_test_config() -> Config {
+        std::env::set_var("TEST_MODE", "true");
+        std::env::set_var("TEST_BALANCE", "100.0");
+        Config::from_env().expect("应该能加载配置")
+    }
+
+    #[tokio::test]
+    async fn test_server_creation() {
+        let config = create_test_config();
+        let eth_client = create_test_eth_client().await;
+        let server = EthereumTradingServer::new(config, eth_client, None);
+        assert!(server.config.server.test_mode);
+    }
+
+    #[tokio::test]
+    async fn test_get_balance_eth() {
+        let config = create_test_config();
+        let eth_client = create_test_eth_client().await;
+        let server = EthereumTradingServer::new(config, eth_client, None);
+
+        let args = GetBalanceArgs {
+            address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb".to_string(),
+            token_address: None,
+        };
+
+        let result = server.get_balance(Parameters(args));
+        assert!(result.is_ok(), "get_balance 应该成功返回");
+
+        let call_result = result.unwrap();
+        assert!(!call_result.content.is_empty(), "返回内容不应为空");
+        assert!(
+            call_result.is_error.is_none() || !call_result.is_error.unwrap(),
+            "不应该是错误状态"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_balance_erc20() {
+        let config = create_test_config();
+        let eth_client = create_test_eth_client().await;
+        let server = EthereumTradingServer::new(config, eth_client, None);
+
+        let args = GetBalanceArgs {
+            address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb".to_string(),
+            token_address: Some("USDC".to_string()),
+        };
+
+        let result = server.get_balance(Parameters(args));
+        assert!(result.is_ok(), "get_balance 应该成功返回");
+    }
+
+    #[tokio::test]
+    async fn test_server_info() {
+        let config = create_test_config();
+        let eth_client = create_test_eth_client().await;
+        let server = EthereumTradingServer::new(config, eth_client, None);
+        let info = server.get_info();
+
+        assert_eq!(info.protocol_version, ProtocolVersion::V_2024_11_05);
+        assert!(info.capabilities.tools.is_some());
+        assert!(info.instructions.is_some());
+    }
+
+    #[test]
+    fn test_balance_result_serialization() {
+        let result = BalanceResult {
+            address: "0x123".to_string(),
+            token: TokenInfo::eth(),
+            balance: "100000000000000000000".to_string(),
+            decimals: 18,
+            formatted_balance: "100".to_string(),
+        };
+
+        let json = serde_json::to_string(&result).expect("应该能序列化");
+        assert!(json.contains("100"));
+        assert!(json.contains("ETH"));
+        assert!(json.contains("0x123"));
+    }
+
+    #[test]
+    fn test_get_balance_args_deserialization() {
+        let json = r#"{"address":"0x123","token_address":"USDC"}"#;
+        let args: GetBalanceArgs = serde_json::from_str(json).expect("应该能反序列化");
+        assert_eq!(args.address, "0x123");
+        assert_eq!(args.token_address, Some("USDC".to_string()));
+
+        let json = r#"{"address":"0x123"}"#;
+        let args: GetBalanceArgs = serde_json::from_str(json).expect("应该能反序列化");
+        assert_eq!(args.address, "0x123");
+        assert_eq!(args.token_address, None);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_balance_queries() {
+        let config = create_test_config();
+        let eth_client = create_test_eth_client().await;
+        let server = EthereumTradingServer::new(config, eth_client, None);
+
+        let mut handles = vec![];
+        for i in 0..5 {
+            let server_clone = server.clone();
+            let handle = tokio::spawn(async move {
+                let args = GetBalanceArgs {
+                    address: format!("0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb{}", i),
+                    token_address: None,
+                };
+                server_clone.get_balance(Parameters(args))
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            let result = handle.await.expect("任务应该成功完成");
+            assert!(result.is_ok());
+        }
+    }
 }
