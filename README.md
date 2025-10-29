@@ -132,11 +132,18 @@ npx @modelcontextprotocol/inspector cargo run --release
 ## 项目结构
 
 ```
-demo/
+.
 ├── Cargo.toml          # 项目配置和依赖
-├── src/
-│   └── main.rs         # 主程序入口
-└── README.md           # 项目文档
+├── README.md           # 项目文档
+├── src/                # 服务器核心代码
+│   ├── main.rs         # 主程序入口
+│   ├── config.rs       # 配置加载和校验
+│   ├── tools/          # MCP 工具实现
+│   └── …               # 其他模块（ERC20、Uniswap 等）
+├── doc/                # 设计与需求文档
+├── test-mcp.sh         # 简单的 MCP 测试脚本
+├── .env.example        # 环境变量示例
+└── .env                # 项目本地配置（可选）
 ```
 
 ## 代码架构
@@ -291,12 +298,12 @@ demo/
 
 ## 开发计划
 
- - [x] 支持 Uniswap V3
- - [x] 添加交易签名和发送功能
- - [x] 支持多链（BSC, Polygon, Arbitrum 等）
- - [x] 添加价格预言机集成
- - [x] 实现复杂多跳路由
- - [x] 添加钱包管理功能
+- [x] 支持 Uniswap V3
+- [x] 添加交易签名和发送功能
+- [x] 支持多链（BSC, Polygon, Arbitrum 等）
+- [x] 添加价格预言机集成
+- [x] 实现复杂多跳路由
+- [x] 添加钱包管理功能
 
 ## 配置说明
 
@@ -321,7 +328,7 @@ demo/
 {
   "mcpServers": {
     "ethereum-trading": {
-      "command": "/Users/panhaisa/haisa/Pan/HaisaPan/gAlpha/EthereumTradingMCPServer/demo/target/release/ethereum-trading-server",
+      "command": "/path/to/ethereum-trading-mcp-server/target/release/ethereum-trading-server",
       "args": [],
       "env": {
         "TEST_MODE": "false",
