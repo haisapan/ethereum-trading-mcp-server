@@ -204,9 +204,10 @@ mod tests {
 
     /// 创建测试配置(强制测试模式)
     fn create_test_config() -> Config {
-        std::env::set_var("TEST_MODE", "true");
-        std::env::set_var("TEST_BALANCE", "100.0");
-        Config::from_env().expect("应该能加载配置")
+        let mut config = Config::from_env().expect("应该能加载配置");
+        config.server.test_mode = true;
+        config.server.test_balance = 100.0;
+        config
     }
 
     #[tokio::test]
